@@ -15,10 +15,8 @@ from html import unescape
 
 #-----------------------------------------------------------------------------------
 # Your Crawl4AI server configuration                                               |
-CRAWL4AI_BASE_URL = "https://yoursite.com" #                                       |
-API_TOKEN = "123456" # omit this if your installation is unsecured.                |
-# Documentation https://docs.crawl4ai.com                                          |
-# Note: This script requires the Crawl4AI server to be running and accessible.     |
+CRAWL4AI_BASE_URL = "https://main-crwal4ai.vmm7pe.easypanel.host" #                |
+API_TOKEN = "2W&B4Q&ePBKz3V**" # omit this if your installation is unsecured.      |
 #-----------------------------------------------------------------------------------
 
 def get_auth_headers():
@@ -157,6 +155,55 @@ def wait_for_completion(task_id, headers, target_url):
     print("⏰ Timeout waiting for results")
     return False
 
+def clean_and_validate_url(url):
+    """Clean URL and validate it's a proper URL"""
+    if not url:
+        return None
+    
+    # Remove RTF formatting codes and other artifacts
+    url = re.sub(r'\{[^}]*\}', '', url)  # Remove RTF codes like {\*\expandedcolortbl;;...}
+    url = re.sub(r'\\[a-zA-Z]+\d*', '', url)  # Remove RTF commands like \cssrgb
+    url = re.sub(r'[^\x20-\x7E]', '', url)  # Remove non-printable characters
+    url = url.strip()
+    
+    # Skip if it's empty after cleaning
+    if not url:
+        return None
+    
+    # Skip comments
+    if url.startswith('#'):
+        return None
+    
+    # Add https:// if missing protocol
+    if not url.startswith(('http://', 'https://')):
+        url = 'https://' + url
+    
+    # Basic URL validation
+    parsed = urlparse(url)
+    if not parsed.netloc or not parsed.scheme:
+        return None
+    
+    return url
+
+def read_urls_from_file(file_path):
+    """Read URLs from a text file, one per line"""
+    urls = []
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line_num, line in enumerate(f, 1):
+                cleaned_url = clean_and_validate_url(line.strip())
+                if cleaned_url:
+                    urls.append(cleaned_url)
+                elif line.strip() and not line.strip().startswith('#'):
+                    print(f"⚠️  Skipping invalid URL on line {line_num}: {line.strip()[:50]}...")
+        return urls
+    except FileNotFoundError:
+        print(f"❌ File not found: {file_path}")
+        return []
+    except Exception as e:
+        print(f"❌ Error reading file: {e}")
+        return []
+
 def save_markdown(content, url):
     """Save content as markdown file with smart filename"""
     filename = get_filename_from_url(url)
@@ -182,28 +229,20 @@ def save_markdown(content, url):
     print(f"💾 Saved: {filename}")
     print(f"📏 Content length: {len(content):,} characters")
 
-def main():
-    """Main function"""
-    print("🚀 Crawl4AI Markdown Extractor")
-    print("=" * 40)
+def process_single_url(url):
+    """Process a single URL"""
+    # Clean and validate URL first
+    cleaned_url = clean_and_validate_url(url)
+    if not cleaned_url:
+        print(f"❌ Invalid URL: {url}")
+        return False
     
-    # Get URL from user
-    url = input("Enter the full URL to scrape: ").strip()
-    
-    if not url:
-        print("❌ No URL provided")
-        return
-    
-    # Add https:// if missing
-    if not url.startswith(('http://', 'https://')):
-        url = 'https://' + url
-    
-    print(f"🌐 Crawling: {url}")
+    print(f"🌐 Crawling: {cleaned_url}")
     
     # Prepare crawl request
     headers = get_auth_headers()
     crawl_data = {
-        "urls": [url],
+        "urls": [cleaned_url],
         "cache_key": f"fresh_{int(time.time())}"
     }
     
@@ -223,24 +262,120 @@ def main():
                 task_id = result.get('task_id') or result.get('id')
                 print(f"📋 Task ID: {task_id}")
                 
-                if wait_for_completion(task_id, headers, url):
-                    print("✅ Success!")
+                if wait_for_completion(task_id, headers, cleaned_url):
+                    return True
                 else:
                     print("❌ Failed to extract content")
+                    return False
             else:
                 # Direct response
                 content = extract_clean_content(result)
                 if content:
-                    save_markdown(content, url)
-                    print("✅ Success!")
+                    save_markdown(content, cleaned_url)
+                    return True
                 else:
                     print("❌ No content found")
+                    return False
         else:
             print(f"❌ Error: {response.status_code}")
-            print(response.text)
+            if response.status_code == 422:
+                print("❌ Invalid URL format")
+            else:
+                print(response.text)
+            return False
             
     except Exception as e:
         print(f"❌ Failed: {e}")
+        return False
+
+def main():
+    """Main function"""
+    import os
+    
+    while True:
+        os.system('clear' if os.name == 'posix' else 'cls')
+        print("🚀 Crawl4AI Markdown Extractor")
+        print("=" * 40)
+        print("Choose an option:")
+        print("1. Process a single URL")
+        print("2. Batch process URLs from text file")
+        print("3. Exit")
+        print()
+        
+        choice = input("Enter your choice (1-3): ").strip()
+        
+        if choice == '1':
+            # Single URL processing
+            url = input("Enter the full URL to scrape: ").strip()
+            if not url:
+                print("❌ No URL provided")
+                input("Press Enter to continue...")
+                continue
+            
+            success = process_single_url(url)
+            if success:
+                print("✅ Success!")
+            
+        elif choice == '2':
+            # Batch processing
+            file_path = input("Enter the filename (or full path) to your text file with URLs: ").strip()
+            if not file_path:
+                print("❌ No file path provided")
+                input("Press Enter to continue...")
+                continue
+            
+            # Check if file exists in current directory if no path separators
+            import os
+            if not os.path.sep in file_path and not os.path.exists(file_path):
+                # Try common extensions
+                for ext in ['', '.txt', '.list']:
+                    test_path = file_path + ext
+                    if os.path.exists(test_path):
+                        file_path = test_path
+                        break
+            
+            urls = read_urls_from_file(file_path)
+            if not urls:
+                print("❌ No valid URLs found in file or file not found")
+                print(f"   Tried to read: {file_path}")
+                print(f"   Current directory: {os.getcwd()}")
+                input("Press Enter to continue...")
+                continue
+            
+            print(f"📋 Found {len(urls)} URLs to process")
+            print("Starting batch processing...")
+            print()
+            
+            successful = 0
+            failed = 0
+            
+            for i, url in enumerate(urls, 1):
+                print(f"[{i}/{len(urls)}] Processing: {url}")
+                if process_single_url(url):
+                    successful += 1
+                    print("✅ Success!")
+                else:
+                    failed += 1
+                    print("❌ Failed!")
+                print("-" * 50)
+                time.sleep(1)  # Brief pause between requests
+            
+            print(f"📊 Batch processing complete!")
+            print(f"✅ Successful: {successful}")
+            print(f"❌ Failed: {failed}")
+            
+        elif choice == '3':
+            print("👋 Goodbye!")
+            break
+            
+        else:
+            print("❌ Invalid choice. Please enter 1, 2, or 3.")
+            input("Press Enter to continue...")
+            continue
+        
+        # Ask if user wants to continue
+        print()
+        input("Press Enter to continue...")
 
 if __name__ == "__main__":
     main()
